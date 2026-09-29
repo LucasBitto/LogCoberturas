@@ -62,23 +62,49 @@ function digital(artes, janela) {
   const page = await browser.newPage();
   await page.emulateTimezone(TZ);
   await page.goto(SITE, { waitUntil: 'networkidle2', timeout: 120000 });
-  await page.waitForFunction(() => Array.isArray(window.items) && window.items.length > 0,
-    { timeout: 90000 }).catch(() => {});
+  // O app guarda a lista em variavel interna (nao visivel de fora), mas
+  // mantem uma copia no armazenamento local. E de la que lemos.
+  const temDados = () => {
+    try {
+      const c = JSON.parse(localStorage.getItem('tnt_items_cache') || '[]');
+      return Array.isArray(c) && c.length > 0;
+    } catch (_) { return false; }
+  };
+  await page.waitForFunction(temDados, { timeout: 90000 }).catch(() => {});
   await new Promise(r => setTimeout(r, 3000));
 
-  const dados = await page.evaluate(() => ({
-    artes: (window.items || []).map(x => ({
-      id: x.id, date: x.date, requestedAt: x.requestedAt, title: x.title,
-      designer: x.designer, status: x.status, finishedAt: x.finishedAt,
-      adjustedAt: x.adjustedAt || '', carousel: x.carousel || 0,
-      categories: x.categories || [], priority: x.priority || '', notes: x.notes || ''
-    })),
-    janelas: window.coverageWindows || {}
-  }));
+  const dados = await page.evaluate(() => {
+    let lista = [];
+    try { lista = JSON.parse(localStorage.getItem('tnt_items_cache') || '[]'); } catch (_) {}
+    if (!Array.isArray(lista) || !lista.length) {
+      if (Array.isArray(window.items)) lista = window.items;          // reserva
+    }
+    // as janelas tambem saem da tela de relatorios, quando disponiveis
+    let janelas = {};
+    try { janelas = window.coverageWindows || {}; } catch (_) {}
+    return {
+      artes: (lista || []).map(x => ({
+        id: x.id, date: x.date, requestedAt: x.requestedAt, title: x.title,
+        designer: x.designer, status: x.status, finishedAt: x.finishedAt,
+        adjustedAt: x.adjustedAt || '', carousel: x.carousel || 0,
+        categories: x.categories || [], priority: x.priority || '', notes: x.notes || ''
+      })),
+      janelas: janelas,
+      sync: (document.getElementById('sync') || {}).textContent || '',
+      configAberta: !!(document.getElementById('config') &&
+                       !document.getElementById('config').classList.contains('hidden'))
+    };
+  });
   await browser.close();
 
   if (!dados.artes.length) {
     console.log('O site nao devolveu nenhuma arte. Nada a revisar nesta rodada.');
+    console.log('  status de sincronizacao: ' + (dados.sync || '(sem status)'));
+    if (dados.configAberta) {
+      console.log('  o site abriu na tela de Configuracao: falta salvar a URL do Apps Script.');
+    } else {
+      console.log('  verifique se o Apps Script esta publicado como NOVA VERSAO e respondendo.');
+    }
     process.exit(0);
   }
   console.log(`Artes lidas do site: ${dados.artes.length}`);
