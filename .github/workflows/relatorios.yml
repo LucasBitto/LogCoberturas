@@ -74,13 +74,19 @@ jobs:
 
       - name: Guardar o historico da revisao
         if: ${{ steps.modo.outputs.valor == 'revisao' }}
+        continue-on-error: true
         run: |
           if [ -n "$(git status --porcelain scripts/estado-pdfs.json)" ]; then
             git config user.name  "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add scripts/estado-pdfs.json
             git commit -m "Revisao de PDFs: atualiza historico"
-            git push
+            # traz o que mudou no repositorio antes de enviar (evita push rejeitado)
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin main && git push && break
+              echo "tentativa $i falhou; repetindo..."
+              sleep 5
+            done
           else
             echo "Nada mudou no historico."
           fi
