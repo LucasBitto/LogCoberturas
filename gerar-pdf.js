@@ -1,6 +1,6 @@
 /**
  * Fluxo de Artes TNT 2.0 - gerador automatico de PDF direto do site.
- * Abre https://lucasbitto.github.io/FluxogramaArtes/ em um navegador
+ * Abre https://lucasbitto.github.io/LogCoberturas/ em um navegador
  * headless, dispara o mesmo botao "PDF do dia" / "PDF do mes" da pagina
  * e salva o resultado em ./saida com a data no nome do arquivo.
  *
@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer');
 
-const SITE = process.env.SITE_URL || 'https://lucasbitto.github.io/FluxogramaArtes/';
+const SITE = process.env.SITE_URL || 'https://lucasbitto.github.io/LogCoberturas/';
 const TZ = 'America/Sao_Paulo';
 const MODO = (process.argv[2] || 'dia').toLowerCase();
 const DATA_FORCADA = (process.env.DATA_ALVO || '').trim();   // opcional: AAAA-MM-DD ou AAAA-MM
@@ -51,8 +51,20 @@ function mesAnterior() {
   await page.evaluateOnNewDocument(() => { window.print = () => { window.__printOk = true; }; });
   await page.emulateTimezone(TZ);
 
+  // Tudo que a pagina reclamar aparece no log do robo
+  const errosPagina = [];
+  page.on('pageerror', e => errosPagina.push('JS: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errosPagina.push('console: ' + m.text().slice(0, 200)); });
+  page.on('requestfailed', r => errosPagina.push('rede: ' + r.url().slice(0, 90) + ' -> ' + (r.failure() || {}).errorText));
+
   console.log('Abrindo', SITE);
   await page.goto(SITE, { waitUntil: 'networkidle2', timeout: 120000 });
+
+  // Espera o app existir de fato (o HTML pode chegar antes do script rodar)
+  await page.waitForFunction(
+    () => document.getElementById('printDay') && typeof window.printDailyReport === 'function',
+    { timeout: 60000 }
+  ).catch(() => {});
 
   // Espera a sincronizacao com a planilha terminar
   await page.waitForFunction(
@@ -74,12 +86,33 @@ function mesAnterior() {
 
   // Diagnostico: o que o site realmente carregou
   const diag = await page.evaluate(() => ({
+    titulo: document.title,
     sync: (document.getElementById('sync') || {}).textContent || '',
+    temBotaoDia: !!document.getElementById('printDay'),
+    temFuncaoDia: typeof window.printDailyReport === 'function',
+    temAbaRelatorios: !!document.getElementById('reportsView'),
+    configAberta: !!(document.getElementById('config') &&
+                     !document.getElementById('config').classList.contains('hidden')),
+    artes: (window.items || []).length,
     meses: [...((document.getElementById('month') || {}).options || [])].map(o => o.value),
     dias: [...document.querySelectorAll('[id^="d20"]')].map(e => e.id.slice(1))
   }));
-  console.log('Sincronizacao:', diag.sync);
+  console.log('Pagina:', diag.titulo);
+  console.log('Sincronizacao:', diag.sync || '(sem status)');
+  console.log('Artes carregadas:', diag.artes);
   console.log('Meses disponiveis no relatorio:', diag.meses.join(', ') || '(nenhum)');
+  if (errosPagina.length) {
+    console.log('--- a pagina reclamou disto ---');
+    [...new Set(errosPagina)].slice(0, 8).forEach(e => console.log('  ' + e));
+  }
+  if (diag.configAberta) {
+    throw new Error('O site abriu na tela de Configuracao: o endereco do Apps Script nao esta salvo. ' +
+                    'Abra o site, va em Config. e salve a URL que termina em /exec.');
+  }
+  if (!diag.temBotaoDia && !diag.temFuncaoDia) {
+    throw new Error('A pagina carregou mas nao tem os controles de relatorio (titulo: "' + diag.titulo + '"). ' +
+                    'Confirme se o index.html publicado no GitHub Pages e a versao atual.');
+  }
 
   const mesAlvo = MODO === 'mes' ? mes : dia.slice(0, 7);
   if (diag.meses.length && !diag.meses.includes(mesAlvo)) {
@@ -106,6 +139,12 @@ function mesAnterior() {
 
   if (MODO === 'dia') {
     const temDia = await page.evaluate(d => !!document.getElementById('d' + d.replaceAll('-', '')), dia);
+    if (!temDia && !diag.artes) {
+      console.log('SEM DADOS: o site nao carregou nenhuma arte. Verifique se o Apps Script esta publicado');
+      console.log('como NOVA VERSAO e respondendo. Nada a gerar.');
+      await browser.close();
+      process.exit(0);
+    }
     if (!temDia) {
       const dias = await page.evaluate(() =>
         [...document.querySelectorAll('[id^="d20"]')].map(e => e.id.slice(1)).sort().reverse());
