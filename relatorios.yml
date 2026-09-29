@@ -52,7 +52,7 @@ jobs:
 
       - name: Gerar o PDF direto do site
         env:
-          SITE_URL: https://lucasbitto.github.io/FluxogramaArtes/
+          SITE_URL: https://lucasbitto.github.io/LogCoberturas/
           DATA_ALVO: ${{ github.event.inputs.data }}
         run: node scripts/gerar-pdf.js ${{ steps.modo.outputs.valor }}
 
