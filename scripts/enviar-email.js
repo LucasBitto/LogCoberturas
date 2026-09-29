@@ -23,7 +23,8 @@ if (!process.env.RELAY_URL || !process.env.RELAY_TOKEN) {
 const { arquivo, pasta } = JSON.parse(fs.readFileSync(destinoJson, 'utf8'));
 const ehMes = /_MES_/.test(arquivo);
 const periodo = arquivo.replace(/^Fluxo-Artes_(DIA|MES)_/, '').replace(/\.pdf$/, '');
-const assunto = (ehMes ? '[FLUXO-PDF][MES] ' : '[FLUXO-PDF][DIA] ') + periodo;
+const revisao = process.env.REVISAO === '1';
+const assunto = (ehMes ? '[FLUXO-PDF][MES] ' : '[FLUXO-PDF][DIA] ') + periodo + (revisao ? ' [REVISAO]' : '');
 
 (async () => {
   const pdf = fs.readFileSync(path.join(SAIDA, arquivo)).toString('base64');
@@ -34,7 +35,11 @@ const assunto = (ehMes ? '[FLUXO-PDF][MES] ' : '[FLUXO-PDF][DIA] ') + periodo;
       token: process.env.RELAY_TOKEN,
       nome: arquivo,
       assunto: assunto,
-      corpo: 'Relatorio gerado automaticamente a partir do site.\nPasta de destino: ' + pasta,
+      corpo: (revisao
+        ? 'RELATORIO REFEITO: este dia foi editado depois do PDF anterior. '
+          + 'Substitua o arquivo de mesmo nome que ja estiver na pasta.\n'
+        : 'Relatorio gerado automaticamente a partir do site.\n')
+        + 'Pasta de destino: ' + pasta,
       pdf: pdf
     })
   });
