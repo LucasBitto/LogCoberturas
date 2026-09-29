@@ -4,18 +4,22 @@ on:
   schedule:
     - cron: '50 2 * * *'    # 23:50 de Brasilia (fim do dia)
     - cron: '0 4 1 * *'     # 01:00 de Brasilia do dia 1 (fecha o mes anterior)
+    - cron: '0 11,17,23 * * *'  # revisao de dias editados (08h, 14h e 20h de Brasilia)
   workflow_dispatch:
     inputs:
       modo:
-        description: 'dia ou mes'
+        description: 'dia, mes ou revisao'
         required: true
         default: 'dia'
         type: choice
-        options: [dia, mes]
+        options: [dia, mes, revisao]
       data:
         description: 'Data especifica para teste (AAAA-MM-DD ou AAAA-MM). Vazio = hoje'
         required: false
         default: ''
+
+permissions:
+  contents: write
 
 jobs:
   gerar:
@@ -44,6 +48,8 @@ jobs:
         run: |
           if [ "${{ github.event.schedule }}" = "0 4 1 * *" ]; then
             echo "valor=mes" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "0 11,17,23 * * *" ]; then
+            echo "valor=revisao" >> "$GITHUB_OUTPUT"
           elif [ -n "${{ github.event.inputs.modo }}" ]; then
             echo "valor=${{ github.event.inputs.modo }}" >> "$GITHUB_OUTPUT"
           else
@@ -51,10 +57,33 @@ jobs:
           fi
 
       - name: Gerar o PDF direto do site
+        if: ${{ steps.modo.outputs.valor != 'revisao' }}
         env:
           SITE_URL: https://lucasbitto.github.io/LogCoberturas/
           DATA_ALVO: ${{ github.event.inputs.data }}
         run: node scripts/gerar-pdf.js ${{ steps.modo.outputs.valor }}
+
+      - name: Revisar dias editados e refazer os PDFs
+        if: ${{ steps.modo.outputs.valor == 'revisao' }}
+        env:
+          SITE_URL: https://lucasbitto.github.io/LogCoberturas/
+          DIAS_REVISAO: '30'
+          RELAY_URL:   ${{ secrets.RELAY_URL }}
+          RELAY_TOKEN: ${{ secrets.RELAY_TOKEN }}
+        run: node scripts/revisar-dias.js
+
+      - name: Guardar o historico da revisao
+        if: ${{ steps.modo.outputs.valor == 'revisao' }}
+        run: |
+          if [ -n "$(git status --porcelain scripts/estado-pdfs.json)" ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add scripts/estado-pdfs.json
+            git commit -m "Revisao de PDFs: atualiza historico"
+            git push
+          else
+            echo "Nada mudou no historico."
+          fi
 
       - name: Guardar copia do PDF no GitHub
         if: always()
@@ -67,8 +96,27 @@ jobs:
 
       # So tenta o OneDrive se os segredos ja estiverem cadastrados.
       - name: Entregar o PDF (ponte por e-mail)
-        if: ${{ env.RELAY_URL != '' }}
+        if: ${{ env.RELAY_URL != '' && steps.modo.outputs.valor != 'revisao' }}
         run: node scripts/enviar-email.js
+
+      # Marca o dia como ja gerado, para a revisao nao refazer sem necessidade
+      - name: Registrar no historico
+        if: ${{ steps.modo.outputs.valor == 'dia' }}
+        continue-on-error: true
+        env:
+          SITE_URL: https://lucasbitto.github.io/LogCoberturas/
+          MARCAR_SEM_GERAR: '1'
+          DIAS_REVISAO: '2'
+        run: |
+          node scripts/revisar-dias.js 2
+          if [ -n "$(git status --porcelain scripts/estado-pdfs.json)" ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add scripts/estado-pdfs.json
+            git commit -m "Registra PDF do dia no historico"
+            git pull --rebase --autostash || true
+            git push
+          fi
 
       # Caminho direto, usado apenas se um dia a TI liberar o registro no Azure.
       - name: Enviar para o OneDrive
