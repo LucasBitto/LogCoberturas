@@ -1,4 +1,4 @@
-name: Relatorios Fluxo de Artes (PDF -> OneDrive)
+name: Relatorios Log de Coberturas (PDF -> OneDrive)
 
 on:
   schedule:
