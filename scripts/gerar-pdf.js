@@ -93,7 +93,11 @@ function mesAnterior() {
     temAbaRelatorios: !!document.getElementById('reportsView'),
     configAberta: !!(document.getElementById('config') &&
                      !document.getElementById('config').classList.contains('hidden')),
-    artes: (window.items || []).length,
+    artes: (function () {
+      try { var c = JSON.parse(localStorage.getItem('tnt_items_cache') || '[]');
+            if (Array.isArray(c) && c.length) return c.length; } catch (e) {}
+      return (window.items || []).length;
+    })(),
     meses: [...((document.getElementById('month') || {}).options || [])].map(o => o.value),
     dias: [...document.querySelectorAll('[id^="d20"]')].map(e => e.id.slice(1))
   }));
